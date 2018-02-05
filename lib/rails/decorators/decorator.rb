@@ -15,42 +15,6 @@ module Rails
         options = targets.extract_options!
 
         targets.each do |target|
-          unless target.is_a?(Class)
-            raise(
-              InvalidDecorator,
-              <<-eos.strip_heredoc
-
-                Problem:
-                  You cannot decorate a Module
-                Summary:
-                  Decoration only works with classes. Decorating modules requires
-                  managing load order, a problem that is very complicated and
-                  beyond the scope of this system.
-                Resolution:
-                  Decorate multiple classes that include the module like so:
-                  `decorate Catalog::Product, Content::Page do`
-              eos
-            )
-          end
-
-          if target.name.to_s.end_with?('Helper')
-            raise(
-              InvalidDecorator,
-              <<-eos.strip_heredoc
-
-                Problem:
-                  Rails::Decorators doesn't work with helpers.
-                Summary:
-                  Rails does some magic with helpers which in certain cases
-                  causes decoration to not work.
-                Resolution:
-                  Create a new helper and in a `to_prepare` block, use
-                  ActionPack's `helper` method to include the helper, e.g.
-                  `MyEngine::ApplicationController.helper(MyEngine::BlogsHelper)`
-              eos
-            )
-          end
-
           namespace = target.to_s.remove('::')
           decorator_name = "#{options[:with].to_s.camelize}#{namespace}Decorator"
 
@@ -79,9 +43,19 @@ module Rails
             extend Rails::Decorators::Decorator
             module_eval(&module_definition)
           end
+          instance_methods = mod.instance_methods - Object.public_instance_methods
+          mixin = instance_methods.any? && !target.is_a?(Class)
 
           target.const_set(decorator_name, mod)
-          mod.decorates(target)
+
+          if mixin
+            target.mixed_into.each { |klass| mod.decorates(klass) }
+            target.extend(Mixin)
+          else
+            mod.decorates(target)
+          end
+
+          nil
         end
       end
 
@@ -98,7 +72,13 @@ module Rails
             .send(:prepend, const_get(:ClassMethodsDecorator))
         end
 
-        if instance_variable_defined?(:@_decorated_block)
+        if base.class == Module
+          base.extend(Mixin)
+
+          if instance_variable_defined?(:@_static_decorated_block)
+            base.class_eval(&@_static_decorated_block)
+          end
+        elsif instance_variable_defined?(:@_decorated_block)
           base.class_eval(&@_decorated_block)
         end
       end
@@ -107,8 +87,9 @@ module Rails
         instance_variable_set(:@_before_decorate_block, block)
       end
 
-      def decorated(&block)
-        instance_variable_set(:@_decorated_block, block)
+      def decorated(static: false, &block)
+        ivar = static ? :@_static_decorated_block : :@_decorated_block
+        instance_variable_set(ivar, block)
       end
 
       def class_methods(&class_methods_module_definition)

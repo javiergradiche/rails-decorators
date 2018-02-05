@@ -92,6 +92,32 @@ module Ecommerce
 end
 ```
 
+When decorating modules and using the `decorated { }` block, you can opt
+to decorate the "static" eigenclass of the module itself by passing
+`static: true`
+
+```ruby
+# in Rails.root/app/models/ecommerce/commentable.decorator
+module Ecommerce
+  decorate Commentable do
+    # This decorates the models that `Commentable` is included into.
+    decorated do
+      scope :with_comments, -> { where.not(comments: []) }
+    end
+
+    # This decorates the `Commentable` module's eigenclass.
+    decorated static: true do
+      mattr_accessor :config
+      self.config = ActiveSupport::Configurable::Configuration.new
+    end
+  end
+end
+```
+
+You can now call `Ecommerce::Commentable.config` as if it was defined on
+the module's eigenclass, and the new `.with_comments` scope will be
+added to all models that `include Ecommerce::Commentable`.
+
 Other engines may want to namespace their customizations so as not to collide with further customizations:
 ```ruby
 # in ecommerce_blog/app/models/ecommerce/product.decorator
